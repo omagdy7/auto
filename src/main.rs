@@ -1,8 +1,8 @@
 use clap::Parser;
 use notify::event::{MetadataKind, ModifyKind};
 use notify::{
-    inotify::INotifyWatcher, Config, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode,
-    Watcher, WatcherKind,
+    inotify::INotifyWatcher, Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+    WatcherKind,
 };
 use std::io::{self, BufRead};
 use std::path::PathBuf;
@@ -14,8 +14,10 @@ use std::time::Duration;
 struct Args {
     #[arg(required = true)]
     cmd: String,
-    #[arg(required = true)]
+    #[arg(required = false)]
     args: Vec<String>,
+    #[arg(required = false, short, long)]
+    recursive: bool,
 }
 
 fn execute(cmd: &String, args: &Vec<String>) {
@@ -44,9 +46,8 @@ fn main() {
     // Create a channel to receive the events
     let (tx, rx) = std::sync::mpsc::channel();
 
-    // This example is a little bit misleading as you can just create one Config and use it for all watchers.
-    // That way the pollwatcher specific stuff is still configured, if it should be used.
-    let mut watcher: Box<dyn Watcher> = if RecommendedWatcher::kind() == WatcherKind::PollWatcher {
+    // create watcher
+    let mut watcher: Box<dyn Watcher> = if RecommendedWatcher::kind() == WatcherKind::Inotify {
         let config = Config::default().with_poll_interval(Duration::from_secs(1));
         Box::new(INotifyWatcher::new(tx, config).unwrap())
     } else {
@@ -56,9 +57,15 @@ fn main() {
 
     // Add the paths to be watched. All of them will use the same event mask.
     for file in &files_to_watch {
-        watcher
-            .watch(file, RecursiveMode::NonRecursive)
-            .expect("Failed to watch path");
+        if file.is_dir() && args.recursive {
+            watcher
+                .watch(file, RecursiveMode::Recursive)
+                .expect("Failed to watch path");
+        } else {
+            watcher
+                .watch(file, RecursiveMode::NonRecursive)
+                .expect("Failed to watch path");
+        }
     }
 
     // Loop over the received events
