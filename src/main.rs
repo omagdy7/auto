@@ -44,7 +44,10 @@ fn main() {
     let args = Args::parse();
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
-        files_to_watch.push(PathBuf::from(line.unwrap()));
+        match line {
+            Ok(line) => files_to_watch.push(PathBuf::from(line)),
+            Err(e) => println!("Error {}, while reading from stdin", e),
+        }
     }
 
     // Create a channel to receive the events
@@ -53,49 +56,69 @@ fn main() {
     // create watcher
     let mut watcher: Box<dyn Watcher> = if RecommendedWatcher::kind() == WatcherKind::Inotify {
         let config = Config::default().with_poll_interval(Duration::from_secs(1));
-        Box::new(INotifyWatcher::new(tx, config).unwrap())
+        Box::new(
+            INotifyWatcher::new(tx, config)
+                .expect("Unexpected problem happend when intializing INotifyWatcher"),
+        )
     } else {
         // use default config for everything else
-        Box::new(RecommendedWatcher::new(tx, Config::default()).unwrap())
+        Box::new(
+            RecommendedWatcher::new(tx, Config::default())
+                .expect("Unexpected problem happend when intializing RecommendedWatcher"),
+        )
     };
 
     // Add the paths to be watched. All of them will use the same event mask.
     for file in &files_to_watch {
         if file.is_dir() && args.recursive {
-            watcher
-                .watch(file, RecursiveMode::Recursive)
-                .expect(format!("Failed to watch dir {:?}", file).as_str());
+            match watcher.watch(file, RecursiveMode::Recursive) {
+                Ok(_) => {}
+                Err(e) => {
+                    println!("Failed to watch dir {:?}, with error {}", file, e)
+                }
+            }
         } else {
-            watcher
-                .watch(file, RecursiveMode::NonRecursive)
-                .expect(format!("Failed to watch {:?}", file).as_str());
+            match watcher.watch(file, RecursiveMode::NonRecursive) {
+                Ok(_) => {}
+                Err(e) => {
+                    println!("Failed to watch file {:?}, with error {}", file, e)
+                }
+            }
         }
     }
 
     // Loop over the received events
     loop {
         match rx.recv() {
-            Ok(event) => {
-                let event = event.unwrap();
-                /* If the event is a modifies the file metadata for one of the watched files,
-                Execute some arbitrary command */
-                if let EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)) = event.kind {
-                    if let Some(path) = event.paths.get(0) {
-                        if event.paths.contains(path) {
-                            if args.log {
-                                print!(
-                                    "FILE {:?}: Executing {} ",
-                                    path.file_name().expect("Should be a file name"),
-                                    &args.cmd
-                                );
-                                println!();
+            Ok(_event) => {
+                match _event {
+                    Ok(event) => {
+                        /* If the event is a modifies the file metadata for one of the watched files,
+                        Execute some arbitrary command */
+                        if let EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)) =
+                            event.kind
+                        {
+                            if let Some(path) = event.paths.get(0) {
+                                if event.paths.contains(path) {
+                                    if args.log {
+                                        print!(
+                                            "FILE {:?}: Executing {} ",
+                                            path.file_name().expect("Should be a file name"),
+                                            &args.cmd
+                                        );
+                                        println!();
+                                    }
+                                    execute(&args.cmd);
+                                }
                             }
-                            execute(&args.cmd);
                         }
+                    }
+                    Err(e) => {
+                        println!("Problem happend with Event with error: {}", e)
                     }
                 }
             }
-            Err(e) => println!("watch error: {:?}", e),
+            Err(e) => println!("Watch error: {:?}", e),
         }
     }
 }
