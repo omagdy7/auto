@@ -9,29 +9,33 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(required = true)]
-    cmd: String,
-    #[arg(required = false)]
-    args: Vec<String>,
     #[arg(required = false, short, long)]
     recursive: bool,
+    #[arg(required = false, short, long)]
+    log: bool,
+    #[arg(required = true)]
+    cmd: String,
 }
 
-fn execute(cmd: &String, args: &Vec<String>) {
-    let output = Command::new(cmd)
-        .args(args)
-        .output()
-        .expect("Failed to execute command");
+fn execute(cmd: &String) {
+    let output = Command::new("sh").arg("-c").arg(cmd).output();
 
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        print!("{}", stdout);
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        eprint!("Command failed: {}", stderr);
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                print!("{}", stdout);
+            } else {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                println!("Command failed: {}", stderr);
+            }
+        }
+        Err(e) => {
+            println!("Failed to execute: {} with error {}", cmd, e);
+        }
     }
 }
 
@@ -60,11 +64,11 @@ fn main() {
         if file.is_dir() && args.recursive {
             watcher
                 .watch(file, RecursiveMode::Recursive)
-                .expect("Failed to watch path");
+                .expect(format!("Failed to watch dir {:?}", file).as_str());
         } else {
             watcher
                 .watch(file, RecursiveMode::NonRecursive)
-                .expect("Failed to watch path");
+                .expect(format!("Failed to watch {:?}", file).as_str());
         }
     }
 
@@ -73,13 +77,20 @@ fn main() {
         match rx.recv() {
             Ok(event) => {
                 let event = event.unwrap();
-
-                // If the event is a modify or create event for one of the watched files,
-                // print a message
+                /* If the event is a modifies the file metadata for one of the watched files,
+                Execute some arbitrary command */
                 if let EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)) = event.kind {
                     if let Some(path) = event.paths.get(0) {
                         if event.paths.contains(path) {
-                            execute(&args.cmd, &args.args);
+                            if args.log {
+                                print!(
+                                    "FILE {:?}: Executing {} ",
+                                    path.file_name().expect("Should be a file name"),
+                                    &args.cmd
+                                );
+                                println!();
+                            }
+                            execute(&args.cmd);
                         }
                     }
                 }
