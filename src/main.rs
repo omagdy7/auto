@@ -20,21 +20,34 @@ struct Args {
     cmd: String,
 }
 
+fn log(file: &PathBuf, command: &String) {
+    print!(
+        "FILE {:?}: Executing {} ",
+        file.file_name().expect("Should be a file name"),
+        command
+    );
+    println!();
+}
+
+// Takes a command and executes via sh -c
 fn execute(cmd: &String) {
     let output = Command::new("sh").arg("-c").arg(cmd).output();
 
     match output {
         Ok(out) => {
             if out.status.success() {
+                // Direct the output to the user
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 print!("{}", stdout);
             } else {
+                // Direct the errors to stderr
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 println!("Command failed: {}", stderr);
             }
         }
         Err(e) => {
             println!("Failed to execute: {} with error {}", cmd, e);
+            std::process::exit(1);
         }
     }
 }
@@ -43,6 +56,8 @@ fn main() {
     let mut files_to_watch: Vec<PathBuf> = vec![];
     let args = Args::parse();
     let stdin = io::stdin();
+
+    // Read files from stdin to watch
     for line in stdin.lock().lines() {
         match line {
             Ok(line) => files_to_watch.push(PathBuf::from(line)),
@@ -56,16 +71,27 @@ fn main() {
     // create watcher
     let mut watcher: Box<dyn Watcher> = if RecommendedWatcher::kind() == WatcherKind::Inotify {
         let config = Config::default().with_poll_interval(Duration::from_secs(1));
-        Box::new(
-            INotifyWatcher::new(tx, config)
-                .expect("Unexpected problem happend when intializing INotifyWatcher"),
-        )
+
+        let watcher = match INotifyWatcher::new(tx, config) {
+            Ok(watcher) => watcher,
+            Err(e) => {
+                println!("Error intializing INotifyWatcher {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        Box::new(watcher)
     } else {
         // use default config for everything else
-        Box::new(
-            RecommendedWatcher::new(tx, Config::default())
-                .expect("Unexpected problem happend when intializing RecommendedWatcher"),
-        )
+        let watcher = match RecommendedWatcher::new(tx, Config::default()) {
+            Ok(watcher) => watcher,
+            Err(e) => {
+                println!("Error intializing INotifyWatcher {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        Box::new(watcher)
     };
 
     // Add the paths to be watched. All of them will use the same event mask.
@@ -74,14 +100,16 @@ fn main() {
             match watcher.watch(file, RecursiveMode::Recursive) {
                 Ok(_) => {}
                 Err(e) => {
-                    println!("Failed to watch dir {:?}, with error {}", file, e)
+                    println!("Failed to watch dir {:?}, with error {}", file, e);
+                    std::process::exit(1);
                 }
             }
         } else {
             match watcher.watch(file, RecursiveMode::NonRecursive) {
                 Ok(_) => {}
                 Err(e) => {
-                    println!("Failed to watch file {:?}, with error {}", file, e)
+                    println!("Failed to watch file {:?}, with error {}", file, e);
+                    std::process::exit(1);
                 }
             }
         }
@@ -101,12 +129,7 @@ fn main() {
                             if let Some(path) = event.paths.get(0) {
                                 if event.paths.contains(path) {
                                     if args.log {
-                                        print!(
-                                            "FILE {:?}: Executing {} ",
-                                            path.file_name().expect("Should be a file name"),
-                                            &args.cmd
-                                        );
-                                        println!();
+                                        log(path, &args.cmd)
                                     }
                                     execute(&args.cmd);
                                 }
@@ -114,11 +137,15 @@ fn main() {
                         }
                     }
                     Err(e) => {
-                        println!("Problem happend with Event with error: {}", e)
+                        println!("Event error: {}", e);
+                        std::process::exit(1);
                     }
                 }
             }
-            Err(e) => println!("Watch error: {:?}", e),
+            Err(e) => {
+                println!("Watch error: {}", e);
+                std::process::exit(1);
+            }
         }
     }
 }
