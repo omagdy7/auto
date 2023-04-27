@@ -10,11 +10,16 @@ use std::process::Command;
 use std::time::Duration;
 
 #[derive(Parser, Debug, Clone)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about = "Execute random commands when file changes", long_about = None)]
 struct Args {
-    #[arg(required = false, short, long)]
+    #[arg(required = false, short, long, help = "Watch directories recursively")]
     recursive: bool,
-    #[arg(required = false, short, long)]
+    #[arg(
+        required = false,
+        short,
+        long,
+        help = "Log the file that triggered the program with the command"
+    )]
     log: bool,
     #[arg(required = true)]
     cmd: String,
